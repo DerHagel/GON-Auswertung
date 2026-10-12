@@ -14,7 +14,7 @@ Liquiditäts- und Wirtschaftlichkeitsbericht für eine Immobilien-Beteiligungsge
 ```bash
 pip install -r requirements.txt
 python -m gon_auswertung beispiel                       # eingabe/beispiel.xlsx mit synthetischen Daten
-python -m gon_auswertung bericht --eingabe eingabe/beispiel.xlsx --ausgabe ausgabe --pdf
+python -m gon_auswertung bericht --eingabe eingabe/beispiel.xlsx --ausgabe ausgabe --pdf   # alle Zielgruppen-Berichte
 python -m gon_auswertung vorlage                        # leere Eingabevorlage eingabe/vorlage.xlsx
 python -m pytest tests
 ```
@@ -43,13 +43,56 @@ Kosten immer als positive Zahlen. Das Zeitfenster ergibt sich aus den Daten (akt
 * Rückstellungen sind **bilanziell** und beeinflussen die Liquidität nicht; sie werden den Maßnahmen gegenübergestellt
 * Szenarien (nur Plan-Monate): Basis (erwartete Kosten) · Optimistisch (Min-Kosten) · Pessimistisch (Max-Kosten, Mietausfall, Zinsaufschlag bei auslaufender Bindung)
 
-## Bericht
+## Berichte je Zielgruppe (Profile)
+
+Ein Lauf erzeugt je Profil einen eigenen Bericht (`bericht_<profil>_<JJJJ-MM>.html`, optional `.pdf`):
+
+| Profil | Zielgruppe | Schwerpunkt |
+|---|---|---|
+| `geschaeftsfuehrung` | intern | volle Tiefe inkl. Objektebene |
+| `gesellschafter` | Gesellschafter | Liquidität, Maßnahmen, Stresstest, eigener Anteil – ohne Objektdetails |
+| `eigentuemer` | Eigentümer | Ertrag, Liquidität, Portfolio und Objektvergleich |
+| `bank` | Kreditinstitute | DSCR, LTV, Debt Yield, Zinsbindung, Stresstest, Maßnahmen |
+
+```bash
+python -m gon_auswertung bericht --eingabe datei.xlsx --profil bank,gesellschafter          # Auswahl
+python -m gon_auswertung bericht --eingabe datei.xlsx --gesellschafter "Gesellschafter B"   # persönlicher Bericht
+python -m gon_auswertung bericht --eingabe datei.xlsx --alle-gesellschafter                 # einer je Gesellschafter
+python -m gon_auswertung bericht --eingabe datei.xlsx --profil profile/beispiel_tiefgaragen.json
+```
+
+Der **persönliche Gesellschafterbericht** zeigt ausschließlich den eigenen Anteil (Quote × Kontostand, Ausschüttungen Ist/Plan,
+offene Maßnahmen, Nachschuss im Stressfall, Ausschüttungsspielraum) – keine Daten anderer Gesellschafter.
+
+### Eigene Profile für individuelle Fragestellungen
+
+JSON-Datei anlegen (Beispiele: `profile/`). Nicht genannte Felder erbt das Profil von `erbt` (Standard `geschaeftsfuehrung`):
+
+```json
+{
+  "erbt": "bank",
+  "titel": "Kurzübersicht für das Finanzierungsgespräch",
+  "einleitung": "Text unter der Überschrift",
+  "abschnitte": ["zusammenfassung", "finanzierung", "szenarien"],
+  "kacheln": ["dscr_ist", "ltv", "min_pess"],
+  "ausblenden": ["t_obj", "heatmap"],
+  "filter": { "nutzung": ["Tiefgarage"], "objekte": ["O01", "O02"] }
+}
+```
+
+* `abschnitte`: zusammenfassung, liquiditaet, finanzierung, instandhaltung, portfolio, szenarien, gesellschafter, methodik
+* `filter`: Teilportfolio. Liquidität/Kontostand betreffen die Gesamtgesellschaft und werden dann automatisch ausgeblendet.
+* Gültige Kacheln und ausblendbare Elemente prüft das Programm und meldet Tippfehler.
+
+## Inhalte des Berichts
 
 Zusammenfassung mit Ampel-Kacheln und automatischen Kernaussagen · Liquidität · Finanzierung (Bankensicht: DSCR, LTV, Debt Yield,
 Break-even, Zinsbindung) · Instandhaltung & Maßnahmen · Portfolio (Heatmap, Objekt-Ranking) · Szenarien & Risiko
-(Nachschussbedarf, Ausschüttungsspielraum, verkraftbarer Mietausfall, Tornado) · Daten & Methodik (Datenqualität, Kontoabstimmung, Glossar).
+(Nachschussbedarf, Ausschüttungsspielraum, verkraftbarer Mietausfall, Tornado) · Gesellschafter · Daten & Methodik
+(Datenqualität, Kontoabstimmung, Glossar).
 
 ## Offene Punkte
 
-* Mindestliquidität und Covenants: bis zur Vorgabe gilt ein Richtwert (100.000 €) im Blatt `Parameter`.
+* Mindestliquidität: bis zu einer Vorgabe gilt ein Richtwert (100.000 €) im Blatt `Parameter`; Covenants sind aktuell nicht vorgesehen.
+* Eigene Excel-Vorlage: wird später geliefert, der Import wird dann darauf angepasst.
 * Dunkelmodus der Grafiken (derzeit helle Diagrammflächen).

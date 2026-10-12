@@ -48,8 +48,12 @@ class Analyse:
     sensitivitaet: pd.DataFrame
     stress: dict[str, float]
     gesellschafter: pd.DataFrame
-    kommentar: list[str]
+    kommentar_t: list[tuple[str, str]]
     abstimmung: pd.DataFrame
+
+    @property
+    def kommentar(self) -> list[str]:
+        return [t for _, t in self.kommentar_t]
 
     @property
     def basis(self) -> Ergebnis:
@@ -234,16 +238,24 @@ def _break_even_leerstand(d: Daten, ziel: float) -> float:
     return lo
 
 
-def _gesellschafter(d: Daten, nachschuss: float, ausschuettung_max: float) -> pd.DataFrame:
+def _gesellschafter(d: Daten, kpis: dict[str, Kpi], erg: dict[str, Ergebnis], nachschuss: float, ausschuettung_max: float) -> pd.DataFrame:
+    """Anteile je Gesellschafter nach Beteiligungsquote (Eigenkapital-/Quotenlogik, keine Steuerwirkung)."""
     if d.gesellschafter.empty:
         return pd.DataFrame()
+    g = erg["Basis"].monat
     t = d.gesellschafter.copy()
-    t["Nachschuss_Stress"] = t["Quote"] * nachschuss
-    t["Ausschuettung_Spielraum"] = t["Quote"] * ausschuettung_max
+    q = t["Quote"]
+    t["Anteil_Kontostand"] = q * kpis["kontostand"].wert
+    t["Ausschuettung_Ist"] = q * g.loc[g["Typ"] == "Ist", "Ausschuettung"].sum()
+    t["Ausschuettung_Plan"] = q * g.loc[g["Typ"] == "Plan", "Ausschuettung"].sum()
+    t["Anteil_Massnahmen_offen"] = q * kpis["massn_offen"].wert
+    t["Anteil_Nettovermoegen"] = q * (d.objekte["Verkehrswert"].sum() - d.objekte["Restschuld"].sum())
+    t["Nachschuss_Stress"] = q * nachschuss
+    t["Ausschuettung_Spielraum"] = q * ausschuettung_max
     return t
 
 
-def _kommentar(d: Daten, kpis: dict[str, Kpi], erg: dict[str, Ergebnis], stress: dict, ok: pd.DataFrame) -> list[str]:
+def _kommentar(d: Daten, kpis: dict[str, Kpi], erg: dict[str, Ergebnis], stress: dict, ok: pd.DataFrame) -> list[tuple[str, str]]:
     p = d.params
     eur = lambda x: f"{x:,.0f} €".replace(",", ".")
     dz = lambda x, n=2: f"{x:.{n}f}".replace(".", ",")
@@ -251,29 +263,32 @@ def _kommentar(d: Daten, kpis: dict[str, Kpi], erg: dict[str, Ergebnis], stress:
     k = kpis
     mb, wb = min_kontostand(erg["Basis"])
     mp, wp = min_kontostand(erg["Pessimistisch"])
-    s.append(f"Der Kontostand beträgt {eur(k['kontostand'].wert)} (Stand {d.letzter_ist:%m/%Y}), entsprechend {dz(k['puffer'].wert, 1)} Monaten laufender Kosten.")
+    s.append(("liquiditaet", f"Der Kontostand beträgt {eur(k['kontostand'].wert)} (Stand {d.letzter_ist:%m/%Y}), entsprechend {dz(k['puffer'].wert, 1)} Monaten laufender Kosten."))
     if mb >= p["mindestliquiditaet"]:
-        s.append(f"Im Basisszenario sinkt die Liquidität bis {d.monate[-1]:%m/%Y} auf mindestens {eur(mb)} ({wb:%m/%Y}) und bleibt über der Mindestliquidität von {eur(p['mindestliquiditaet'])}.")
+        s.append(("liquiditaet", f"Im Basisszenario sinkt die Liquidität bis {d.monate[-1]:%m/%Y} auf mindestens {eur(mb)} ({wb:%m/%Y}) und bleibt über der Mindestliquidität von {eur(p['mindestliquiditaet'])}."))
     else:
-        s.append(f"Im Basisszenario unterschreitet die Liquidität im {wb:%m/%Y} die Mindestliquidität von {eur(p['mindestliquiditaet'])} (Tiefpunkt {eur(mb)}).")
+        s.append(("liquiditaet", f"Im Basisszenario unterschreitet die Liquidität im {wb:%m/%Y} die Mindestliquidität von {eur(p['mindestliquiditaet'])} (Tiefpunkt {eur(mb)})."))
     if mp < p["mindestliquiditaet"]:
-        s.append(f"Im Stressfall fällt der Kontostand bis {wp:%m/%Y} auf {eur(mp)}; es entstünde ein Nachschussbedarf von {eur(stress['nachschuss'])}.")
+        s.append(("liquiditaet", f"Im Stressfall fällt der Kontostand bis {wp:%m/%Y} auf {eur(mp)}; es entstünde ein Nachschussbedarf von {eur(stress['nachschuss'])}."))
     else:
-        s.append(f"Auch im Stressfall bleibt die Liquidität mit mindestens {eur(mp)} über der Mindestliquidität.")
-    s.append(f"Die Kapitaldienstdeckung (DSCR) liegt bei {dz(k['dscr_ist'].wert)} ({TEXT.get(k['dscr_ist'].status, '')}); der Mietertrag trägt die Finanzierung bis zu einem Absinken der Auslastung auf {k['break_even'].wert:.0%} (aktuell {k['auslastung'].wert:.0%}).")
+        s.append(("liquiditaet", f"Auch im Stressfall bleibt die Liquidität mit mindestens {eur(mp)} über der Mindestliquidität."))
+    s.append(("finanzierung", f"Die Kapitaldienstdeckung (DSCR) liegt bei {dz(k['dscr_ist'].wert)} ({TEXT.get(k['dscr_ist'].status, '')}); der Mietertrag trägt die Finanzierung bis zu einem Absinken der Auslastung auf {k['break_even'].wert:.0%} (aktuell {k['auslastung'].wert:.0%})."))
     kritisch = ok[ok["Ampel_DSCR"] == ROT]
     if len(kritisch):
-        s.append(f"{len(kritisch)} von {len(ok)} Objekten haben einen DSCR unter {dz(p['dscr_gelb'])}: " + ", ".join(kritisch.nsmallest(5, "DSCR")["Name"]) + ("." if len(kritisch) <= 5 else " u. a."))
+        s.append(("portfolio", f"{len(kritisch)} von {len(ok)} Objekten haben einen DSCR unter {dz(p['dscr_gelb'])}: " + ", ".join(kritisch.nsmallest(5, "DSCR")["Name"]) + ("." if len(kritisch) <= 5 else " u. a.")))
     if k["massn_offen"].wert > 0:
-        s.append(f"Offene Maßnahmen von {eur(k['massn_offen'].wert)} stehen an; bilanzielle Rückstellungen decken {k['rueckstellung'].wert / k['massn_offen'].wert:.0%} davon, der Kontostand allein {k['kassen_deckung'].wert:.0%}.")
+        if d.teilportfolio:
+            s.append(("massnahmen", f"Offene Maßnahmen von {eur(k['massn_offen'].wert)} stehen an; bilanzielle Rückstellungen decken {k['rueck_deckung'].wert:.0%} davon."))
+        else:
+            s.append(("massnahmen", f"Offene Maßnahmen von {eur(k['massn_offen'].wert)} stehen an; bilanzielle Rückstellungen decken {k['rueckstellung'].wert / k['massn_offen'].wert:.0%} davon, der Kontostand allein {k['kassen_deckung'].wert:.0%}."))
     be = stress["leerstand_be"]
     if 0 < be < 1:
-        s.append(f"Zusätzlicher Mietausfall von bis zu {dz(be * 100, 1)} % würde die Mindestliquidität im Prognosezeitraum noch nicht gefährden.")
+        s.append(("liquiditaet", f"Zusätzlicher Mietausfall von bis zu {dz(be * 100, 1)} % würde die Mindestliquidität im Prognosezeitraum noch nicht gefährden."))
     elif be == 0:
-        s.append("Schon ohne zusätzlichen Mietausfall wird die Mindestliquidität unterschritten.")
+        s.append(("liquiditaet", "Schon ohne zusätzlichen Mietausfall wird die Mindestliquidität unterschritten."))
     bald = ok[(ok["Zinsbindung_Monate"].notna()) & (ok["Zinsbindung_Monate"] <= 12)]
     if len(bald):
-        s.append(f"{len(bald)} Darlehen (Restschuld {eur(bald['Restschuld'].sum())}) laufen innerhalb von 12 Monaten aus der Zinsbindung – Anschlussfinanzierung vorbereiten.")
+        s.append(("finanzierung", f"{len(bald)} Darlehen (Restschuld {eur(bald['Restschuld'].sum())}) laufen innerhalb von 12 Monaten aus der Zinsbindung – Anschlussfinanzierung vorbereiten."))
     return s
 
 
@@ -292,7 +307,7 @@ def analysieren(d: Daten) -> Analyse:
         "leerstand_be": _break_even_leerstand(d, ziel),
     }
     sens = _sensitivitaet(d, mb)
-    ges = _gesellschafter(d, stress["nachschuss"], stress["ausschuettung_max"])
+    ges = _gesellschafter(d, kpis, erg, stress["nachschuss"], stress["ausschuettung_max"])
     kom = _kommentar(d, kpis, erg, stress, ok)
     ab = erg["Basis"].monat.loc[erg["Basis"].monat["Typ"] == "Ist", ["CF_netto", "Kontostand", "Abstimmung_Differenz"]].copy()
     toleranz = max(1000.0, 0.01 * float(erg["Basis"].monat["Miete"].mean()))

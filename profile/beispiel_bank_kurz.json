@@ -1,0 +1,7 @@
+{
+  "erbt": "bank",
+  "titel": "Kurzübersicht für das Finanzierungsgespräch",
+  "zielgruppe": "Kompakte Fassung: Kennzahlen, Kapitaldienst, Zinsbindung und Stresstest ohne Objekttabellen.",
+  "abschnitte": ["zusammenfassung", "finanzierung", "szenarien"],
+  "ausblenden": ["t_obj", "t_nutz", "heatmap", "dscr_objekte", "t_monat", "t_abst", "t_gloss"]
+}

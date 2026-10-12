@@ -1,0 +1,9 @@
+{
+  "erbt": "eigentuemer",
+  "titel": "Auswertung Tiefgaragen",
+  "zielgruppe": "Teilportfolio: nur Tiefgaragen (Sonderfragestellung).",
+  "einleitung": "Wie ertragreich und wie stark finanziert sind die Tiefgaragen im Vergleich zum Gesamtbestand?",
+  "filter": { "nutzung": ["Tiefgarage"] },
+  "abschnitte": ["zusammenfassung", "finanzierung", "instandhaltung", "portfolio", "methodik"],
+  "kacheln": ["dscr_ist", "auslastung", "ltv", "noi_rendite", "debt_yield", "massn_offen"]
+}

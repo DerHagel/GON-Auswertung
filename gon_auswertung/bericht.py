@@ -13,6 +13,7 @@ from jinja2 import Environment
 from . import grafiken
 from .kennzahlen import GELB, GRUEN, ROT, SYMBOL, TEXT, Analyse, Kpi
 from .modell import min_kontostand
+from .profile import ABSCHNITT_TITEL, ABSCHNITTE, Profil, lade_profil
 
 
 def _fmt(k: Kpi) -> str:
@@ -92,86 +93,53 @@ details{margin:8px 0}summary{cursor:pointer;color:var(--accent)}
 @media (max-width:560px){.grid2{grid-template-columns:1fr}header,main,nav{padding-left:14px;padding-right:14px}}
 """
 
-TEMPLATE = """<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Liquiditäts- und Wirtschaftlichkeitsbericht</title><style>{{ css }}</style></head><body>
-<header><h1>Liquiditäts- und Wirtschaftlichkeitsbericht</h1>
-<p class="sub">Stand: letzter Ist-Monat {{ stand }} · Prognose bis {{ ende }} · {{ n_obj }} Objekte · erstellt {{ erstellt }}</p></header>
-<nav><div><a href="#zusammenfassung">Zusammenfassung</a><a href="#liquiditaet">Liquidität</a><a href="#finanzierung">Finanzierung (Bank)</a><a href="#instandhaltung">Instandhaltung & Maßnahmen</a><a href="#portfolio">Portfolio</a><a href="#szenarien">Szenarien & Risiko</a><a href="#methodik">Daten & Methodik</a></div></nav>
+SECTIONS = {
+    'zusammenfassung': '<section id="zusammenfassung"><h2>Zusammenfassung</h2>\n<p class="lead">Die wichtigsten Kennzahlen auf einen Blick. Symbole und Farben: ● in Ordnung · ▲ beobachten · ■ kritisch (Schwellen im Parameter-Blatt einstellbar).</p>\n<div class="tiles">{% for k in tiles %}<div class="tile {{ k.status or \'\' }}"><div class="t">{{ k.titel }}</div><div class="v">{% if k.status %}<span class="amp {{ k.status }}">{{ sym[k.status] }}</span> {% endif %}{{ k.text }}</div><div class="s">{{ k.formel }}</div></div>{% endfor %}</div>\n{% if kommentar %}<div class="card"><h3 style="margin-top:0">Kernaussagen</h3><ul class="kom">{% for s in kommentar %}<li>{{ s }}</li>{% endfor %}</ul></div>{% endif %}\n{{ fig(\'kontostand\', \'Kontostand: Ist und Prognose mit Szenario-Korridor\', \'Die Kurve zeigt die kumulierte Liquidität. Das blaue Band reicht vom optimistischen bis zum pessimistischen Szenario; die gepunktete rote Linie ist die Mindestliquidität.\') }}\n</section>',
+    'liquiditaet': '<section id="liquiditaet"><h2>Liquidität</h2>\n<p class="lead">Woher kommt das Geld, wohin fließt es – und wann wird es eng?</p>\n{{ fig(\'cashflow\', \'Mieteinnahmen gegenüber Kosten je Monat\', \'Liegt die Mietlinie über den gestapelten Kosten, entsteht ein Überschuss. Außerordentliche Maßnahmen (rosa) erzeugen die Spitzen.\') }}\n<div class="grid2">{{ fig(\'wasserfall_ist\', \'Wohin die Miete fließt – Ist-Zeitraum\', \'Von der Miete bleibt nach allen Kosten und Ausschüttungen die Veränderung des Kontostands.\') }}\n{{ fig(\'wasserfall_plan\', \'Wohin die Miete fließt – Prognosezeitraum\', \'Gleiche Darstellung für die Plan-Monate (Basisszenario).\') }}</div>\n{% if t_monat %}<h3>Monatsübersicht Basisszenario</h3>{{ t_monat }}{% endif %}\n</section>',
+    'finanzierung': '<section id="finanzierung"><h2>Finanzierung (Sicht der Banken)</h2>\n<p class="lead">Trägt das Betriebsergebnis den Kapitaldienst, wie robust ist die Auslastung und wann laufen Zinsbindungen aus?</p>\n<div class="tiles">{% for k in fin_tiles %}<div class="tile {{ k.status or \'\' }}"><div class="t">{{ k.titel }}</div><div class="v">{% if k.status %}<span class="amp {{ k.status }}">{{ sym[k.status] }}</span> {% endif %}{{ k.text }}</div><div class="s">{{ k.erklaerung }}</div></div>{% endfor %}</div>\n{{ fig(\'kapitaldienst\', \'Kapitaldienst und Kapitaldienstdeckung (DSCR)\', \'Oben: Zins und Tilgung. Unten: Wie oft das Betriebsergebnis den Kapitaldienst deckt; unter der roten Linie reicht es nicht.\') }}\n<div class="grid2">{{ fig(\'auslastung_be\', \'Auslastung gegenüber Break-even je Objekt\', \'Objekte oberhalb der Diagonalen decken ihre Kosten inkl. Kapitaldienst; die Punktgröße zeigt die Miethöhe.\') }}\n{{ fig(\'zinsbindung\', \'Anschlussfinanzierung: Restschuld nach Zinsbindungsende\', \'Je höher der Balken, desto mehr Refinanzierungs- und Zinsänderungsrisiko in diesem Jahr.\') }}</div>\n</section>',
+    'instandhaltung': '<section id="instandhaltung"><h2>Instandhaltung & Maßnahmen</h2>\n<p class="lead">Außerordentliche Maßnahmen mit Kostenspanne (Fehlerbalken = Minimum bis Maximum). Schraffiert = geplant, ausgefüllt = beauftragt/abgeschlossen.</p>\n{{ fig(\'massnahmen\', \'Maßnahmen nach Monat\', \'Grau = bereits angefallen (Ist), rosa = Prognose. Die Spannweite zeigt die Kostenunsicherheit.\') }}\n{{ fig(\'deckung\', \'Sind die offenen Maßnahmen gedeckt?\', \'Rückstellungen sind aktuell nur bilanziell. Entscheidend ist, ob der Kontostand die Maßnahmen tragen kann.\') }}\n{% if t_massn %}<h3>Maßnahmenliste</h3>{{ t_massn }}{% endif %}\n</section>',
+    'portfolio': '<section id="portfolio"><h2>Portfolio</h2>\n<p class="lead">Wo liegen Stärken und Schwächen im Bestand? Objekte sind nach DSCR sortiert (schwächste zuerst bzw. oben).</p>\n{{ fig(\'nutzung\', \'Nutzungsarten im Vergleich\', \'Mietanteil und Kapitaldienstdeckung je Nutzungsart.\') }}\n{{ fig(\'dscr_objekte\', \'DSCR je Objekt\', \'Jedes Objekt gegen die Schwellen: grün ≥ Zielwert, gelb dazwischen, rot kritisch.\') }}\n{{ fig(\'heatmap\', \'Cashflow je Objekt und Monat (nach Maßnahmen)\', \'Blau = Überschuss, rot = Defizit, grau = ausgeglichen. Schwächste Objekte stehen oben.\') }}\n{% if t_obj %}<h3>Objektkennzahlen (Ist-Zeitraum)</h3>{{ t_obj }}{% endif %}\n{% if t_nutz %}<h3>Nutzungsarten</h3>{{ t_nutz }}{% endif %}\n</section>',
+    'szenarien': '<section id="szenarien"><h2>Szenarien & Risiko</h2>\n<p class="lead">Was passiert, wenn es anders kommt? Basis = erwartete Kosten · Optimistisch = Minimalkosten · Pessimistisch = Maximalkosten, zusätzlicher Mietausfall und Zinsaufschlag bei auslaufender Bindung.</p>\n{% if t_szen %}{{ t_szen }}{% endif %}\n<div class="tiles">\n<div class="tile"><div class="t">Nachschussbedarf im Stressfall</div><div class="v">{{ eur(stress.nachschuss) }}</div><div class="s">Betrag, der fehlt, um die Mindestliquidität zu halten</div></div>\n<div class="tile"><div class="t">Ausschüttungsspielraum (Stressfall)</div><div class="v">{{ eur(stress.ausschuettung_max) }}</div><div class="s">Ausschüttung, die zusätzlich möglich wäre, ohne die Mindestliquidität im Stressfall zu verletzen</div></div>\n<div class="tile"><div class="t">Verkraftbarer Mietausfall</div><div class="v">{{ \'%.1f\'|format(stress.leerstand_be*100)|replace(\'.\',\',\') }} %</div><div class="s">zusätzlicher Mietausfall bis die Mindestliquidität erreicht ist (Basis-Maßnahmen)</div></div></div>\n{{ fig(\'tornado\', \'Sensitivität: Was beeinflusst den tiefsten Kontostand am stärksten?\', \'Längere Balken = größerer Einfluss. Zinsen wirken nur auf Darlehen, deren Zinsbindung im Prognosezeitraum endet.\') }}\n</section>',
+    'methodik': '<section id="methodik"><h2>Daten & Methodik</h2>\n<h3>Hinweise zur Datenqualität</h3>\n{% for stufe, text in meldungen %}<div class="{{ \'warn\' if stufe==\'warn\' else \'info\' }}">{{ text }}</div>{% else %}<div class="info">Keine Auffälligkeiten.</div>{% endfor %}\n{% if t_abst %}<h3>Kontoabstimmung (Ist-Monate)</h3>{{ t_abst }}{% endif %}\n{% if t_gloss %}<h3>Kennzahlen-Glossar</h3>{{ t_gloss }}{% endif %}\n<details><summary>Rechenlogik</summary><div class="card"><ul>\n<li><b>NOI</b> = Miete − feste Kosten − laufende Instandhaltung (ohne Kapitaldienst).</li>\n<li><b>Cashflow vor Maßnahmen</b> = NOI − Zins − Tilgung. <b>Netto-Cashflow</b> = Cashflow vor Maßnahmen − außerordentliche Instandhaltung − Ausschüttung + Nachschuss.</li>\n<li><b>Kontostand</b>: Ist-Monate laut Konto; Prognose = letzter Ist-Kontostand + Netto-Cashflow.</li>\n<li><b>Rückstellungen</b> sind rein bilanziell und beeinflussen die Liquidität nicht; sie werden nur den Maßnahmen gegenübergestellt.</li>\n<li><b>Szenarien</b> verändern ausschließlich Plan-Monate. Ist-Monate bleiben unverändert.</li></ul></div></details>\n</section>',
+    'gesellschafter': '<section id="gesellschafter"><h2>Gesellschafter</h2>\n<p class="lead">Anteile nach Beteiligungsquote. Reine Quotenbetrachtung ohne steuerliche Wirkung; maßgeblich sind Gesellschaftsvertrag und Beschlüsse.</p>\n{% if person_tiles %}<h3 style="margin-top:0">{{ person }}</h3><div class="tiles">{% for t in person_tiles %}<div class="tile"><div class="t">{{ t.titel }}</div><div class="v">{{ t.text }}</div><div class="s">{{ t.erkl }}</div></div>{% endfor %}</div>{% endif %}\n{% if t_ges %}<h3>Übersicht nach Gesellschaftern</h3>{{ t_ges }}{% endif %}\n{% if not person_tiles and not t_ges %}<div class="info">Keine Gesellschafterdaten erfasst (Blatt „Gesellschafter“).</div>{% endif %}\n</section>',
+}
+HEAD = """<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{ titel }}</title><style>{{ css }}</style></head><body>
+<header><h1>{{ titel }}</h1>
+<p class="sub">Stand: letzter Ist-Monat {{ stand }} · Prognose bis {{ ende }} · {{ n_obj }} Objekte · erstellt {{ erstellt }}{% if person %} · für {{ person }}{% endif %}</p>
+{% if zielgruppe %}<p class="sub">{{ zielgruppe }}</p>{% endif %}{% if einleitung %}<p class="lead" style="margin-top:10px">{{ einleitung }}</p>{% endif %}</header>
+<nav><div>{% for k, t in nav %}<a href="#{{ k }}">{{ t }}</a>{% endfor %}</div></nav>
 <main>
-<section id="zusammenfassung"><h2>Zusammenfassung</h2>
-<p class="lead">Die wichtigsten Kennzahlen auf einen Blick. Symbole und Farben: ● in Ordnung · ▲ beobachten · ■ kritisch (Schwellen im Parameter-Blatt einstellbar).</p>
-<div class="tiles">{% for k in tiles %}<div class="tile {{ k.status or '' }}"><div class="t">{{ k.titel }}</div><div class="v">{% if k.status %}<span class="amp {{ k.status }}">{{ sym[k.status] }}</span> {% endif %}{{ k.text }}</div><div class="s">{{ k.formel }}</div></div>{% endfor %}</div>
-<div class="card"><h3 style="margin-top:0">Kernaussagen</h3><ul class="kom">{% for s in kommentar %}<li>{{ s }}</li>{% endfor %}</ul></div>
-{{ fig('kontostand', 'Kontostand: Ist und Prognose mit Szenario-Korridor', 'Die Kurve zeigt die kumulierte Liquidität. Das blaue Band reicht vom optimistischen bis zum pessimistischen Szenario; die gepunktete rote Linie ist die Mindestliquidität.') }}
-</section>
-
-<section id="liquiditaet"><h2>Liquidität</h2>
-<p class="lead">Woher kommt das Geld, wohin fließt es – und wann wird es eng?</p>
-{{ fig('cashflow', 'Mieteinnahmen gegenüber Kosten je Monat', 'Liegt die Mietlinie über den gestapelten Kosten, entsteht ein Überschuss. Außerordentliche Maßnahmen (rosa) erzeugen die Spitzen.') }}
-<div class="grid2">{{ fig('wasserfall_ist', 'Wohin die Miete fließt – Ist-Zeitraum', 'Von der Miete bleibt nach allen Kosten und Ausschüttungen die Veränderung des Kontostands.') }}
-{{ fig('wasserfall_plan', 'Wohin die Miete fließt – Prognosezeitraum', 'Gleiche Darstellung für die Plan-Monate (Basisszenario).') }}</div>
-<h3>Monatsübersicht Basisszenario</h3>{{ t_monat }}
-</section>
-
-<section id="finanzierung"><h2>Finanzierung (Sicht der Banken)</h2>
-<p class="lead">Trägt das Betriebsergebnis den Kapitaldienst, wie robust ist die Auslastung und wann laufen Zinsbindungen aus?</p>
-<div class="tiles">{% for k in fin_tiles %}<div class="tile {{ k.status or '' }}"><div class="t">{{ k.titel }}</div><div class="v">{% if k.status %}<span class="amp {{ k.status }}">{{ sym[k.status] }}</span> {% endif %}{{ k.text }}</div><div class="s">{{ k.erklaerung }}</div></div>{% endfor %}</div>
-{{ fig('kapitaldienst', 'Kapitaldienst und Kapitaldienstdeckung (DSCR)', 'Oben: Zins und Tilgung. Unten: Wie oft das Betriebsergebnis den Kapitaldienst deckt; unter der roten Linie reicht es nicht.') }}
-<div class="grid2">{{ fig('auslastung_be', 'Auslastung gegenüber Break-even je Objekt', 'Objekte oberhalb der Diagonalen decken ihre Kosten inkl. Kapitaldienst; die Punktgröße zeigt die Miethöhe.') }}
-{{ fig('zinsbindung', 'Anschlussfinanzierung: Restschuld nach Zinsbindungsende', 'Je höher der Balken, desto mehr Refinanzierungs- und Zinsänderungsrisiko in diesem Jahr.') }}</div>
-</section>
-
-<section id="instandhaltung"><h2>Instandhaltung & Maßnahmen</h2>
-<p class="lead">Außerordentliche Maßnahmen mit Kostenspanne (Fehlerbalken = Minimum bis Maximum). Schraffiert = geplant, ausgefüllt = beauftragt/abgeschlossen.</p>
-{{ fig('massnahmen', 'Maßnahmen nach Monat', 'Grau = bereits angefallen (Ist), rosa = Prognose. Die Spannweite zeigt die Kostenunsicherheit.') }}
-{{ fig('deckung', 'Sind die offenen Maßnahmen gedeckt?', 'Rückstellungen sind aktuell nur bilanziell. Entscheidend ist, ob der Kontostand die Maßnahmen tragen kann.') }}
-<h3>Maßnahmenliste</h3>{{ t_massn }}
-</section>
-
-<section id="portfolio"><h2>Portfolio</h2>
-<p class="lead">Wo liegen Stärken und Schwächen im Bestand? Objekte sind nach DSCR sortiert (schwächste zuerst bzw. oben).</p>
-{{ fig('nutzung', 'Nutzungsarten im Vergleich', 'Mietanteil und Kapitaldienstdeckung je Nutzungsart.') }}
-{{ fig('dscr_objekte', 'DSCR je Objekt', 'Jedes Objekt gegen die Schwellen: grün ≥ Zielwert, gelb dazwischen, rot kritisch.') }}
-{{ fig('heatmap', 'Cashflow je Objekt und Monat (nach Maßnahmen)', 'Blau = Überschuss, rot = Defizit, grau = ausgeglichen. Schwächste Objekte stehen oben.') }}
-<h3>Objektkennzahlen (Ist-Zeitraum)</h3>{{ t_obj }}
-<h3>Nutzungsarten</h3>{{ t_nutz }}
-</section>
-
-<section id="szenarien"><h2>Szenarien & Risiko</h2>
-<p class="lead">Was passiert, wenn es anders kommt? Basis = erwartete Kosten · Optimistisch = Minimalkosten · Pessimistisch = Maximalkosten, zusätzlicher Mietausfall und Zinsaufschlag bei auslaufender Bindung.</p>
-{{ t_szen }}
-<div class="tiles">
-<div class="tile"><div class="t">Nachschussbedarf im Stressfall</div><div class="v">{{ eur(stress.nachschuss) }}</div><div class="s">Betrag, der fehlt, um die Mindestliquidität zu halten</div></div>
-<div class="tile"><div class="t">Ausschüttungsspielraum (Stressfall)</div><div class="v">{{ eur(stress.ausschuettung_max) }}</div><div class="s">Ausschüttung, die zusätzlich möglich wäre, ohne die Mindestliquidität im Stressfall zu verletzen</div></div>
-<div class="tile"><div class="t">Verkraftbarer Mietausfall</div><div class="v">{{ '%.1f'|format(stress.leerstand_be*100)|replace('.',',') }} %</div><div class="s">zusätzlicher Mietausfall bis die Mindestliquidität erreicht ist (Basis-Maßnahmen)</div></div></div>
-{{ fig('tornado', 'Sensitivität: Was beeinflusst den tiefsten Kontostand am stärksten?', 'Längere Balken = größerer Einfluss. Zinsen wirken nur auf Darlehen, deren Zinsbindung im Prognosezeitraum endet.') }}
-{% if t_ges %}<h3>Verteilung auf Gesellschafter</h3>{{ t_ges }}{% endif %}
-</section>
-
-<section id="methodik"><h2>Daten & Methodik</h2>
-<h3>Hinweise zur Datenqualität</h3>
-{% for stufe, text in meldungen %}<div class="{{ 'warn' if stufe=='warn' else 'info' }}">{{ text }}</div>{% else %}<div class="info">Keine Auffälligkeiten.</div>{% endfor %}
-<h3>Kontoabstimmung (Ist-Monate)</h3>{{ t_abst }}
-<h3>Kennzahlen-Glossar</h3>{{ t_gloss }}
-<details><summary>Rechenlogik</summary><div class="card"><ul>
-<li><b>NOI</b> = Miete − feste Kosten − laufende Instandhaltung (ohne Kapitaldienst).</li>
-<li><b>Cashflow vor Maßnahmen</b> = NOI − Zins − Tilgung. <b>Netto-Cashflow</b> = Cashflow vor Maßnahmen − außerordentliche Instandhaltung − Ausschüttung + Nachschuss.</li>
-<li><b>Kontostand</b>: Ist-Monate laut Konto; Prognose = letzter Ist-Kontostand + Netto-Cashflow.</li>
-<li><b>Rückstellungen</b> sind rein bilanziell und beeinflussen die Liquidität nicht; sie werden nur den Maßnahmen gegenübergestellt.</li>
-<li><b>Szenarien</b> verändern ausschließlich Plan-Monate. Ist-Monate bleiben unverändert.</li></ul></div></details>
-</section></main>
+"""
+FOOT = """</main>
 <script>
 function gonResize(){document.querySelectorAll('.js-plotly-plot').forEach(function(p){try{Plotly.Plots.resize(p)}catch(e){}})}
 window.addEventListener('load',function(){gonResize();setTimeout(gonResize,300)});window.addEventListener('beforeprint',gonResize);
 </script></body></html>"""
 
 
-def baue_html(a: Analyse) -> str:
+
+LIQUIDITAETSKACHELN = {"kontostand", "min_basis", "min_pess", "puffer", "kassen_deckung", "cf_ist"}
+
+
+def baue_html(a: Analyse, profil: Profil | None = None, person: str | None = None) -> str:
+    profil = profil or lade_profil("geschaeftsfuehrung")
     d = a.daten
-    figs = grafiken.alle(a)
+    aus = set(profil.ausblenden)
+    abschnitte = [x for x in profil.abschnitte if x in ABSCHNITTE]       # Reihenfolge wie im Profil
+    themen = set(profil.kommentar_themen)
+    kacheln, fin_kacheln = list(profil.kacheln), list(profil.fin_kacheln)
+    if profil.gefiltert:      # Teilportfolio: Liquidität/Konto gehört zur Gesamtgesellschaft
+        abschnitte = [x for x in abschnitte if x not in ("liquiditaet", "szenarien", "gesellschafter")]
+        themen.discard("liquiditaet")
+        kacheln = [x for x in kacheln if x not in LIQUIDITAETSKACHELN]
+        aus |= {"kontostand", "cashflow", "wasserfall_ist", "wasserfall_plan", "tornado", "t_monat", "t_abst", "t_szen"}
+    figs = {k: v for k, v in grafiken.alle(a).items() if k not in aus}
     erste = [True]
 
     def fig(key: str, titel: str, erkl: str) -> str:
+        if key not in figs:
+            return ""
         f = figs[key]
         js = "inline" if erste[0] else False
         erste[0] = False
@@ -179,8 +147,8 @@ def baue_html(a: Analyse) -> str:
         return f'<div class="card chart"><h3 style="margin-top:0">{html.escape(titel)}</h3><p class="hint">{html.escape(erkl)}</p><div class="plot">{div}</div></div>'
 
     k = a.kpis
-    tiles = [k[x] for x in ("kontostand", "min_basis", "min_pess", "puffer", "dscr_ist", "auslastung", "ltv", "rueck_deckung", "kassen_deckung", "massn_offen")]
-    fin = [k[x] for x in ("dscr_ist", "dscr_plan", "kd_quote", "ltv", "debt_yield", "noi_rendite", "cf_rendite", "break_even")]
+    tiles = [k[x] for x in kacheln]
+    fin = [k[x] for x in fin_kacheln]
     mk = lambda lst: [{"titel": x.titel, "text": _fmt(x), "status": x.status, "formel": x.formel, "erklaerung": x.erklaerung} for x in lst]
 
     g = a.basis.monat.copy()
@@ -214,7 +182,29 @@ def baue_html(a: Analyse) -> str:
                        "Unterdeckung Mindestliq.": max(0.0, d.params["mindestliquiditaet"] - mn)})
     t_szen = _tabelle(pd.DataFrame(zeilen), {c: "eur" for c in ["Tiefster Kontostand", "Endstand", "Maßnahmen Prognose", "Netto-CF Prognose", "Unterdeckung Mindestliq."]} | {"im Monat": "datum"})
 
-    t_ges = _tabelle(a.gesellschafter.rename(columns={"Nachschuss_Stress": "Nachschuss Stressfall", "Ausschuettung_Spielraum": "Ausschüttungsspielraum"}), {"Quote": "pct", "Nachschuss Stressfall": "eur", "Ausschüttungsspielraum": "eur"}) if len(a.gesellschafter) else ""
+    t_ges, person_tiles = "", []
+    if len(a.gesellschafter):
+        gs = a.gesellschafter
+        if person:
+            zeile = gs[gs["Name"] == person]
+            if zeile.empty:
+                raise ValueError(f"Gesellschafter '{person}' nicht gefunden. Vorhanden: {', '.join(gs['Name'])}")
+            r = zeile.iloc[0]
+            person_tiles = [
+                {"titel": "Beteiligungsquote", "text": f"{r['Quote'] * 100:.1f} %".replace(".", ","), "erkl": "Anteil am Gesellschaftskapital laut Blatt Gesellschafter"},
+                {"titel": "Anteil am Kontostand", "text": _eur(r["Anteil_Kontostand"]) + " €", "erkl": "Quote × Kontostand (letzter Ist-Monat)"},
+                {"titel": "Ausschüttungen im Ist-Zeitraum", "text": _eur(r["Ausschuettung_Ist"]) + " €", "erkl": "Quote × ausgeschüttete Beträge"},
+                {"titel": "Geplante Ausschüttungen", "text": _eur(r["Ausschuettung_Plan"]) + " €", "erkl": "Quote × geplante Ausschüttungen im Prognosezeitraum"},
+                {"titel": "Anteil an offenen Maßnahmen", "text": _eur(r["Anteil_Massnahmen_offen"]) + " €", "erkl": "Quote × erwartete Kosten offener Maßnahmen"},
+                {"titel": "Nachschuss im Stressfall", "text": _eur(r["Nachschuss_Stress"]) + " €", "erkl": "Quote × Fehlbetrag zur Mindestliquidität im pessimistischen Szenario"},
+                {"titel": "Ausschüttungsspielraum", "text": _eur(r["Ausschuettung_Spielraum"]) + " €", "erkl": "Quote × zusätzlich mögliche Ausschüttung, ohne im Stressfall die Mindestliquidität zu verletzen"},
+                {"titel": "Anteil am Nettovermögen", "text": _eur(r["Anteil_Nettovermoegen"]) + " €", "erkl": "Quote × (Verkehrswert − Restschuld), Näherung"},
+            ]
+        elif "t_ges" not in aus:
+            t_ges = _tabelle(gs.rename(columns={"Anteil_Kontostand": "Anteil Kontostand", "Ausschuettung_Ist": "Ausschüttung Ist", "Ausschuettung_Plan": "Ausschüttung Plan",
+                                                "Anteil_Massnahmen_offen": "Anteil offene Maßnahmen", "Anteil_Nettovermoegen": "Anteil Nettovermögen",
+                                                "Nachschuss_Stress": "Nachschuss Stressfall", "Ausschuettung_Spielraum": "Ausschüttungsspielraum"}),
+                             {"Quote": "pct", **{c: "eur" for c in ["Anteil Kontostand", "Ausschüttung Ist", "Ausschüttung Plan", "Anteil offene Maßnahmen", "Anteil Nettovermögen", "Nachschuss Stressfall", "Ausschüttungsspielraum"]}})
 
     ab = a.abstimmung.reset_index().rename(columns={"Monat": "Monat", "CF_netto": "Berechneter Netto-CF", "Kontostand": "Kontostand", "Abstimmung_Differenz": "Differenz zur Kontoveränderung"})
     ab["Monat"] = ab["Monat"].dt.strftime("%m/%Y")
@@ -222,11 +212,18 @@ def baue_html(a: Analyse) -> str:
     gl = pd.DataFrame([{"Kennzahl": x.titel, "Erklärung": x.erklaerung, "Formel": x.formel} for x in a.kpis.values()])
     t_gloss = _tabelle(gl, {})
 
-    tmpl = Environment(autoescape=False).from_string(TEMPLATE)
-    return tmpl.render(css=CSS, stand=f"{d.letzter_ist:%m/%Y}", ende=f"{d.monate[-1]:%m/%Y}", n_obj=len(d.objekte), erstellt=f"{datetime.now():%d.%m.%Y}",
-                       tiles=mk(tiles), fin_tiles=mk(fin), sym=SYMBOL, kommentar=[html.escape(s) for s in a.kommentar], fig=fig,
-                       t_monat=t_monat, t_massn=t_massn, t_obj=t_obj, t_nutz=t_nutz, t_szen=t_szen, t_ges=t_ges, t_abst=t_abst, t_gloss=t_gloss,
-                       stress=a.stress, eur=_eur, meldungen=[(s, html.escape(t)) for s, t in d.meldungen])
+    tabellen = {"t_monat": t_monat, "t_massn": t_massn, "t_obj": t_obj, "t_nutz": t_nutz, "t_szen": t_szen, "t_abst": t_abst, "t_gloss": t_gloss}
+    tabellen = {k_: ("" if k_ in aus else v) for k_, v in tabellen.items()}
+    kommentar = [html.escape(t) for tag, t in a.kommentar_t if tag in themen]
+    env = Environment(autoescape=False)
+    ctx = dict(css=CSS, titel=profil.titel, stand=f"{d.letzter_ist:%m/%Y}", ende=f"{d.monate[-1]:%m/%Y}", n_obj=len(d.objekte), erstellt=f"{datetime.now():%d.%m.%Y}",
+               zielgruppe=html.escape(profil.zielgruppe), einleitung=html.escape(profil.einleitung), person=html.escape(person) if person else None,
+               nav=[(x, ABSCHNITT_TITEL[x]) for x in abschnitte], tiles=mk(tiles), fin_tiles=mk(fin), sym=SYMBOL, kommentar=kommentar, fig=fig,
+               t_ges=t_ges, person_tiles=person_tiles, stress=a.stress, eur=_eur, meldungen=[(s_, html.escape(t)) for s_, t in d.meldungen], **tabellen)
+    teile = [env.from_string(HEAD).render(**ctx)]
+    teile += [env.from_string(SECTIONS[x]).render(**ctx) for x in abschnitte]
+    teile.append(FOOT)
+    return "".join(teile)
 
 
 def finde_browser() -> str | None:

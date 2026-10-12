@@ -36,6 +36,7 @@ class Daten:
     letzter_ist: pd.Timestamp
     monate: list[pd.Timestamp]
     meldungen: list[tuple[str, str]] = field(default_factory=list)   # (Stufe, Text)
+    teilportfolio: bool = False
 
     @property
     def ist_monate(self) -> list[pd.Timestamp]:
@@ -186,3 +187,23 @@ def laden(pfad: str | Path) -> Daten:
         meld.append(("info", "Mindestliquidität entspricht dem Standard-Richtwert – bitte durch Vorgabe aus Gesellschaftsvertrag/Bank ersetzen, sobald vorhanden."))
 
     return Daten(objekte, monat, massn, konto, gesell, params, letzter_ist, monate, meld)
+
+
+def filtere(d: Daten, nutzung: list[str] | None = None, objekte: list[str] | None = None) -> Daten:
+    """Teilportfolio bilden (für individuelle Berichte). Das Konto bleibt Gesellschaftsebene."""
+    from dataclasses import replace
+
+    ids = set(d.objekte["Objekt_ID"])
+    if nutzung:
+        ids &= set(d.objekte.loc[d.objekte["Nutzung"].isin(nutzung), "Objekt_ID"])
+    if objekte:
+        unbekannt = set(objekte) - set(d.objekte["Objekt_ID"])
+        if unbekannt:
+            raise EingabeFehler("Filter: unbekannte Objekt_ID: " + ", ".join(sorted(unbekannt)))
+        ids &= set(objekte)
+    if not ids:
+        raise EingabeFehler("Filter: keine Objekte ausgewählt.")
+    meld = list(d.meldungen) + [("info", f"Teilportfolio: {len(ids)} von {len(d.objekte)} Objekten. Kontostand/Liquidität beziehen sich weiterhin auf die gesamte Gesellschaft und werden nicht ausgewertet.")]
+    return replace(d, objekte=d.objekte[d.objekte["Objekt_ID"].isin(ids)].reset_index(drop=True),
+                   monat=d.monat[d.monat["Objekt_ID"].isin(ids)].reset_index(drop=True),
+                   massnahmen=d.massnahmen[d.massnahmen["Objekt_ID"].isin(ids)].reset_index(drop=True), meldungen=meld, teilportfolio=True)
