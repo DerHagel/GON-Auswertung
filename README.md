@@ -61,8 +61,8 @@ python -m gon_auswertung bericht --eingabe datei.xlsx --alle-gesellschafter     
 python -m gon_auswertung bericht --eingabe datei.xlsx --profil profile/beispiel_tiefgaragen.json
 ```
 
-Der **persönliche Gesellschafterbericht** zeigt ausschließlich den eigenen Anteil (Quote × Kontostand, Ausschüttungen Ist/Plan,
-offene Maßnahmen, Nachschuss im Stressfall, Ausschüttungsspielraum) – keine Daten anderer Gesellschafter.
+Der **persönliche Gesellschafterbericht** zeigt den eigenen Anteil (Quote × Kontostand, Ausschüttungen Ist/Plan,
+offene Maßnahmen, Nachschuss im Stressfall, Ausschüttungsspielraum) und zusätzlich die Übersicht aller Quoten; der eigene Anteil ist markiert.
 
 ### Eigene Profile für individuelle Fragestellungen
 

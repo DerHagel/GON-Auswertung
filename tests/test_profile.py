@@ -36,9 +36,10 @@ def test_abschnitte_je_zielgruppe(analyse):
     assert 'id="portfolio"' not in gs
 
 
-def test_personenbericht_zeigt_nur_eigenen_anteil(analyse):
+def test_personenbericht_zeigt_eigenen_anteil_und_alle_quoten(analyse):
     h = baue_html(analyse, lade_profil("gesellschafter"), person="Gesellschafter B")
-    assert "Gesellschafter B" in h and "Gesellschafter C" not in h and "Gesellschafter A" not in h
+    assert "Ihr Anteil" in h and h.count("Ihr Anteil") == 1
+    assert all(n in h for n in ("Gesellschafter A", "Gesellschafter C", "Gesellschafter D"))
     with pytest.raises(ValueError):
         baue_html(analyse, lade_profil("gesellschafter"), person="Unbekannt")
 
